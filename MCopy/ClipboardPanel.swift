@@ -45,7 +45,6 @@ enum PanelPosition: String, CaseIterable, Identifiable {
 }
 
 class ClipboardPanel: NSPanel, NSWindowDelegate {
-    private var previousApp: NSRunningApplication?
     weak var monitor: ClipboardMonitor?
     private let store: ClipboardStore
 
@@ -85,12 +84,9 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
 
     func showPanel() {
-        previousApp = NSWorkspace.shared.frontmostApplication
-
         guard let screen = NSScreen.main else {
             alphaValue = 1
             makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
@@ -142,7 +138,6 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         setFrame(startFrame, display: false)
         alphaValue = 0
         makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = openDuration
@@ -174,10 +169,6 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
             self.skipCloseAnimation = false
             self.isAnimatingClose = false
             self.alphaValue = 1
-            // Return focus to whichever app was frontmost before the panel opened.
-            // The paste path activates previousApp itself; this covers ESC / click-away.
-            self.previousApp?.activate()
-            self.previousApp = nil
         })
     }
 
@@ -192,8 +183,6 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         skipCloseAnimation = true
         close()
         skipCloseAnimation = false
-        previousApp?.activate()
-        previousApp = nil
     }
 
     /// Offset toward the off-screen edge for the given position. Used for both
