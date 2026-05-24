@@ -4,12 +4,16 @@ import SwiftData
 struct ClipboardHistoryView: View {
     @Query(sort: \ClipboardItem.timestamp, order: .reverse) private var items: [ClipboardItem]
     @AppStorage(PanelPosition.defaultsKey) private var panelPositionRaw: String = PanelPosition.bottom.rawValue
+    @ObservedObject var panelState: PanelState
     @State private var selectedID: UUID?
     @State private var searchQuery: String = ""
+    @State private var scrollResetToken: UUID = UUID()
     @FocusState private var isSearchFocused: Bool
 
     var onPaste: (ClipboardItem) -> Void
     var onDismiss: () -> Void
+
+    private static let leadingAnchorID = "__leading_anchor__"
 
     private var panelPosition: PanelPosition {
         PanelPosition(rawValue: panelPositionRaw) ?? .bottom
@@ -17,11 +21,8 @@ struct ClipboardHistoryView: View {
 
     private var displayItems: [ClipboardItem] {
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return Array(items.prefix(50)) }
-        return items
-            .filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
-            .prefix(50)
-            .map { $0 }
+        guard !q.isEmpty else { return items }
+        return items.filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
     }
 
     var body: some View {
@@ -48,12 +49,21 @@ struct ClipboardHistoryView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             isSearchFocused = true
-            ensureValidSelection()
-            // Re-assert on the next runloop tick: on cold launch the TextField
-            // isn't wired into the panel's responder chain yet when onAppear
-            // fires, so the synchronous assignment above gets dropped.
+            selectedID = displayItems.first?.id
+            // Cold launch: the TextField isn't wired into the panel's
+            // responder chain yet when onAppear fires, so re-assert next tick.
             DispatchQueue.main.async {
                 isSearchFocused = true
+            }
+        }
+        .onChange(of: panelState.openToken) { _, _ in
+            // The hosting view persists across panel opens, so onAppear only
+            // fires once. Per-open behavior hangs off this token instead.
+            isSearchFocused = true
+            if panelState.resetOnNextOpen {
+                panelState.resetOnNextOpen = false
+                selectedID = displayItems.first?.id
+                scrollResetToken = UUID()
             }
         }
         .onChange(of: searchQuery) { _, _ in
@@ -135,16 +145,30 @@ struct ClipboardHistoryView: View {
     private var cardScroll: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(displayItems, id: \.id) { item in
-                        CardView(item: item, isSelected: item.id == selectedID)
-                            .id(item.id)
-                            .onTapGesture { onPaste(item) }
+                // Sentinel sits outside the leading padding so scrolling to its
+                // leading edge snaps content to offset 0 — preserving the
+                // 16pt visual gutter that anchoring the first card would eat.
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: 0, height: 1).id(Self.leadingAnchorID)
+                    HStack(spacing: 10) {
+                        ForEach(displayItems, id: \.id) { item in
+                            CardView(item: item, isSelected: item.id == selectedID)
+                                .id(item.id)
+                                .onTapGesture { onPaste(item) }
+                        }
                     }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 14)
+            }
+            .onAppear {
+                DispatchQueue.main.async {
+                    proxy.scrollTo(Self.leadingAnchorID, anchor: .leading)
+                }
+            }
+            .onChange(of: scrollResetToken) { _, _ in
+                proxy.scrollTo(Self.leadingAnchorID, anchor: .leading)
             }
             .onChange(of: selectedID) { _, newID in
                 guard let newID else { return }
@@ -158,17 +182,27 @@ struct ClipboardHistoryView: View {
     private var verticalCardScroll: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 10) {
-                    ForEach(displayItems, id: \.id) { item in
-                        CardView(item: item, isSelected: item.id == selectedID)
-                            .id(item.id)
-                            .onTapGesture { onPaste(item) }
+                VStack(spacing: 0) {
+                    Color.clear.frame(width: 1, height: 0).id(Self.leadingAnchorID)
+                    VStack(spacing: 10) {
+                        ForEach(displayItems, id: \.id) { item in
+                            CardView(item: item, isSelected: item.id == selectedID)
+                                .id(item.id)
+                                .onTapGesture { onPaste(item) }
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
                 }
-                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 14)
-                .padding(.top, 12)
-                .padding(.bottom, 14)
+            }
+            .onAppear {
+                DispatchQueue.main.async {
+                    proxy.scrollTo(Self.leadingAnchorID, anchor: .top)
+                }
+            }
+            .onChange(of: scrollResetToken) { _, _ in
+                proxy.scrollTo(Self.leadingAnchorID, anchor: .top)
             }
             .onChange(of: selectedID) { _, newID in
                 guard let newID else { return }

@@ -1,5 +1,25 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
+
+/// Decoded-image cache keyed by ClipboardItem.id.
+/// Avoids re-decoding JPEG/TIFF data on every SwiftUI re-render — scrolling a
+/// row of image cards otherwise pegs the CPU.
+enum ImagePreviewCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = ClipboardStore.capacity
+        return c
+    }()
+
+    static func image(for id: UUID, data: Data) -> NSImage? {
+        let key = id.uuidString as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let img = NSImage(data: data) else { return nil }
+        cache.setObject(img, forKey: key)
+        return img
+    }
+}
 
 struct CardView: View {
     let item: ClipboardItem
@@ -53,6 +73,8 @@ struct CardView: View {
             switch item.type {
             case .image:
                 imagePreview
+            case .file:
+                filePreview
             default:
                 Text(item.textContent ?? "")
                     .font(.system(size: 11, design: .monospaced))
@@ -70,19 +92,83 @@ struct CardView: View {
 
     @ViewBuilder
     private var imagePreview: some View {
-        if let data = item.imageData, let nsImage = NSImage(data: data) {
+        if let data = item.thumbnailData ?? item.imageData,
+           let nsImage = ImagePreviewCache.image(for: item.id, data: data) {
             Image(nsImage: nsImage)
                 .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(height: contentHeight)
-                .clipped()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Image(systemName: "photo")
                 .font(.system(size: 26))
                 .foregroundStyle(.white.opacity(0.2))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.14, green: 0.14, blue: 0.155))
         }
+    }
+
+    @ViewBuilder
+    private var filePreview: some View {
+        let paths = (item.textContent ?? "")
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty }
+        let firstPath = paths.first ?? ""
+
+        let thumbImage: NSImage? = {
+            if let data = item.thumbnailData ?? item.imageData,
+               let img = ImagePreviewCache.image(for: item.id, data: data) { return img }
+            if isImageFile(firstPath) { return NSImage(contentsOfFile: firstPath) }
+            return nil
+        }()
+
+        if let nsImage = thumbImage {
+            ZStack(alignment: .bottomTrailing) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if paths.count > 1 {
+                    Text("+\(paths.count - 1)")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(Capsule())
+                        .padding(6)
+                }
+            }
+        } else {
+            let icon = NSWorkspace.shared.icon(forFile: firstPath)
+            let name = URL(fileURLWithPath: firstPath).lastPathComponent
+
+            VStack(spacing: 6) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 60, height: 60)
+
+                Text(name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(red: 0.85, green: 0.85, blue: 0.87))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 10)
+
+                if paths.count > 1 {
+                    Text("+\(paths.count - 1) more")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func isImageFile(_ path: String) -> Bool {
+        let ext = URL(fileURLWithPath: path).pathExtension
+        guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .image)
     }
 
     // MARK: - Footer
@@ -136,8 +222,21 @@ extension ClipboardItem {
         }
     }
 
+    /// True when this is a `.file` whose first path is an image file.
+    /// Such items stay classified as `.file` so paste yields a file URL, but
+    /// we render them with the image visual treatment for consistency.
+    var isImageFile: Bool {
+        guard type == .file,
+              let first = textContent?.components(separatedBy: "\n").first,
+              !first.isEmpty else { return false }
+        let ext = URL(fileURLWithPath: first).pathExtension
+        guard !ext.isEmpty, let utType = UTType(filenameExtension: ext) else { return false }
+        return utType.conforms(to: .image)
+    }
+
     /// Title bar background color keyed to content type.
     var titleBarColor: Color {
+        if isImageFile { return Color(red: 0.52, green: 0.30, blue: 0.72) }
         switch type {
         case .text:  return Color(red: 0.36, green: 0.38, blue: 0.44)   // brighter slate
         case .url:   return Color(red: 0.24, green: 0.50, blue: 0.85)   // bright blue
@@ -147,6 +246,7 @@ extension ClipboardItem {
     }
 
     var typeIcon: String {
+        if isImageFile { return "photo" }
         switch type {
         case .text:  return "doc.text"
         case .image: return "photo"

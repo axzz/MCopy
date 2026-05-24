@@ -17,18 +17,28 @@ final class ClipboardStore {
         self.modelContext = modelContext
     }
 
-    /// Insert a new clipboard item at the front. If an identical entry
-    /// (same content type + payload) is already the most recent, it is
-    /// touched instead of duplicated. Evicts oldest entries beyond capacity.
+    /// Insert a new clipboard item at the front. If an entry with identical
+    /// content already exists in history, it is touched (moved to the front)
+    /// instead of duplicated. Evicts oldest entries beyond capacity.
     @discardableResult
     func insert(_ item: ClipboardItem) -> ClipboardItem {
-        if let existing = findDuplicate(of: item) {
-            touch(existing)
-            return existing
+        let existing = (try? modelContext.fetch(
+            FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
+        )) ?? []
+
+        if let dup = findDuplicate(of: item, in: existing) {
+            touch(dup)
+            return dup
         }
         modelContext.insert(item)
-        item.timestamp = Date()
-        evictIfNeeded()
+        // The new item just took one slot; everything past (capacity - 1) in
+        // the pre-insert list is now over capacity.
+        let surviveCount = Self.capacity - 1
+        if existing.count > surviveCount {
+            for stale in existing[surviveCount...] {
+                modelContext.delete(stale)
+            }
+        }
         try? modelContext.save()
         return item
     }
@@ -40,22 +50,15 @@ final class ClipboardStore {
         try? modelContext.save()
     }
 
-    /// Returns true if an item with the same content already sits at the front.
-    private func findDuplicate(of item: ClipboardItem) -> ClipboardItem? {
-        let all = (try? modelContext.fetch(
-            FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
-        )) ?? []
-        return all.first { $0.contentType == item.contentType && $0.textContent == item.textContent && $0.imageData == item.imageData }
-    }
-
-    /// Delete entries past the capacity (the oldest by timestamp).
-    private func evictIfNeeded() {
-        let all = (try? modelContext.fetch(
-            FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
-        )) ?? []
-        guard all.count > Self.capacity else { return }
-        for stale in all[Self.capacity...] {
-            modelContext.delete(stale)
+    private func findDuplicate(of item: ClipboardItem, in existing: [ClipboardItem]) -> ClipboardItem? {
+        existing.first { candidate in
+            guard candidate.contentType == item.contentType,
+                  candidate.textContent == item.textContent else { return false }
+            // Compare on the small thumbnail when present — raw image data is
+            // tens of MB per screenshot and byte-comparison is O(size).
+            let lhs = item.thumbnailData ?? item.imageData
+            let rhs = candidate.thumbnailData ?? candidate.imageData
+            return lhs == rhs
         }
     }
 }

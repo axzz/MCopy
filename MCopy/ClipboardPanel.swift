@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import SwiftData
 
@@ -44,10 +45,25 @@ enum PanelPosition: String, CaseIterable, Identifiable {
     var isVertical: Bool { self == .left || self == .right }
 }
 
+/// Bridge between the AppKit panel and the SwiftUI history view for events
+/// that aren't naturally expressible through view state — chiefly the
+/// "panel just became visible" pulse, since `onAppear` doesn't fire when
+/// the hosting view is merely re-ordered to front.
+final class PanelState: ObservableObject {
+    /// Bumped on every `showPanel()`. The view observes this to run
+    /// per-open behavior.
+    @Published var openToken: UUID = UUID()
+    /// Latched by the panel right before close when a paste occurred.
+    /// Consumed by the view on the next open to snap scroll/selection
+    /// back to the top — the just-pasted item is now at index 0 and the
+    /// retained scroll offset would otherwise leave it off-screen.
+    var resetOnNextOpen: Bool = false
+}
+
 class ClipboardPanel: NSPanel, NSWindowDelegate {
-    private var previousApp: NSRunningApplication?
     weak var monitor: ClipboardMonitor?
     private let store: ClipboardStore
+    private let panelState = PanelState()
 
     private var isAnimatingClose = false
     private var skipCloseAnimation = false
@@ -74,6 +90,7 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         delegate = self
 
         let view = ClipboardHistoryView(
+            panelState: panelState,
             onPaste: { [weak self] item in self?.pasteItem(item) },
             onDismiss: { [weak self] in self?.close() }
         )
@@ -85,12 +102,9 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
 
     func showPanel() {
-        previousApp = NSWorkspace.shared.frontmostApplication
-
         guard let screen = NSScreen.main else {
             alphaValue = 1
             makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
@@ -142,7 +156,7 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         setFrame(startFrame, display: false)
         alphaValue = 0
         makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        panelState.openToken = UUID()
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = openDuration
@@ -174,10 +188,6 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
             self.skipCloseAnimation = false
             self.isAnimatingClose = false
             self.alphaValue = 1
-            // Return focus to whichever app was frontmost before the panel opened.
-            // The paste path activates previousApp itself; this covers ESC / click-away.
-            self.previousApp?.activate()
-            self.previousApp = nil
         })
     }
 
@@ -189,11 +199,10 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         monitor?.ignoreNextChange()
         store.touch(item)
         item.writeToPasteboard()
+        panelState.resetOnNextOpen = true
         skipCloseAnimation = true
         close()
         skipCloseAnimation = false
-        previousApp?.activate()
-        previousApp = nil
     }
 
     /// Offset toward the off-screen edge for the given position. Used for both
