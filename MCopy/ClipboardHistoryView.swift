@@ -17,11 +17,8 @@ struct ClipboardHistoryView: View {
 
     private var displayItems: [ClipboardItem] {
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return Array(items.prefix(50)) }
-        return items
-            .filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
-            .prefix(50)
-            .map { $0 }
+        guard !q.isEmpty else { return items }
+        return items.filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
     }
 
     var body: some View {

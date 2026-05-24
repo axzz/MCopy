@@ -56,10 +56,12 @@ struct MCopyApp: App {
     private static func deleteDefaultStore() {
         guard let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first,
-        let bundleID = Bundle.main.bundleIdentifier else { return }
+        ).first else { return }
 
-        let storeDir = appSupport.appendingPathComponent(bundleID)
-        try? FileManager.default.removeItem(at: storeDir)
+        // SwiftData's default container writes default.store plus its
+        // SQLite WAL/SHM siblings directly into Application Support.
+        for name in ["default.store", "default.store-wal", "default.store-shm"] {
+            try? FileManager.default.removeItem(at: appSupport.appendingPathComponent(name))
+        }
     }
 }
