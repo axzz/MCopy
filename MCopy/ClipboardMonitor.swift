@@ -3,6 +3,11 @@ import SwiftData
 import UniformTypeIdentifiers
 
 class ClipboardMonitor {
+    /// Upper bound on a single RTF or HTML payload we keep. 512 KB comfortably
+    /// fits normal styled prose; oversize payloads usually come from webpages
+    /// embedding base64 images and aren't worth the storage cost.
+    private static let maxRichTextBytes = 512 * 1024
+
     private var timer: Timer?
     private var lastChangeCount: Int
     private let store: ClipboardStore
@@ -75,10 +80,30 @@ class ClipboardMonitor {
                url.host != nil {
                 return ClipboardItem(contentType: .url, textContent: trimmed)
             }
-            return ClipboardItem(contentType: .text, textContent: text)
+            // Capture rich-text representations alongside the plain string so
+            // paste preserves formatting in rich-text-aware receivers. Sources
+            // vary: Notes/Word/Pages provide RTF, web browsers often only HTML.
+            // Cap each payload — webpage HTML routinely embeds base64 images or
+            // megabytes of inline CSS, and SwiftData would bloat fast. Past the
+            // cap we drop the rich payload and fall back to plain text on paste.
+            let rtf = Self.boundedRichText(pb.data(forType: .rtf))
+            let html = Self.boundedRichText(pb.data(forType: .html))
+            return ClipboardItem(
+                contentType: .text,
+                textContent: text,
+                rtfData: rtf,
+                htmlData: html
+            )
         }
 
         return nil
+    }
+
+    /// Passes through the data when present and within `maxRichTextBytes`;
+    /// returns nil otherwise so the item falls back to plain text on paste.
+    private static func boundedRichText(_ data: Data?) -> Data? {
+        guard let data, data.count <= maxRichTextBytes else { return nil }
+        return data
     }
 
     /// Returns a downscaled JPEG thumbnail for image files, or nil otherwise.
