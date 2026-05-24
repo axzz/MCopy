@@ -27,6 +27,14 @@ final class ClipboardStore {
         )) ?? []
 
         if let dup = findDuplicate(of: item, in: existing) {
+            // Latest formatting wins: the user re-copied the same text, possibly
+            // from a richer source (e.g. plain copy from Terminal, then styled
+            // copy from Word). Refresh the rich-text payloads so paste uses the
+            // most recent fidelity rather than whatever was captured first.
+            if dup.type == .text {
+                dup.rtfData = item.rtfData
+                dup.htmlData = item.htmlData
+            }
             touch(dup)
             return dup
         }
