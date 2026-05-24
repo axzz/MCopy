@@ -105,7 +105,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 420)
+        .frame(width: 520, height: 280)
         .onAppear {
             openAtLogin = LoginItemManager.isEnabled
             MCopySettingsPresentation.activateAndBringToFront()
