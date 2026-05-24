@@ -103,7 +103,6 @@ struct CardView: View {
                 .font(.system(size: 26))
                 .foregroundStyle(.white.opacity(0.2))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.14, green: 0.14, blue: 0.155))
         }
     }
 

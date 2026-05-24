@@ -78,8 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Register stored shortcuts and listen for changes.
         let store = ShortcutStore.shared
-        register(.activatePaste,      shortcut: store.activatePaste)
-        register(.activatePasteStack, shortcut: store.activatePasteStack)
+        register(.activatePaste, shortcut: store.activatePaste)
         store.onChange = { [weak self] action, shortcut in
             self?.register(action, shortcut: shortcut)
         }
@@ -132,9 +131,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch id {
         case ShortcutAction.activatePaste.hotKeyID:
             togglePanel()
-        case ShortcutAction.activatePasteStack.hotKeyID:
-            // TODO: paste stack mode — feature not yet implemented.
-            break
         default:
             break
         }

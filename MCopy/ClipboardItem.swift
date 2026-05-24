@@ -49,8 +49,8 @@ final class ClipboardItem {
                 pb.setString(text, forType: .string)
             }
         case .image:
-            if let data = imageData, let image = NSImage(data: data) {
-                pb.writeObjects([image])
+            if let data = imageData {
+                pb.setData(data, forType: .tiff)
             }
         case .file:
             let urls = (textContent ?? "")

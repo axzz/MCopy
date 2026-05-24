@@ -59,9 +59,6 @@ struct SettingsView: View {
     @AppStorage(PanelPosition.defaultsKey) private var panelPositionRaw: String = PanelPosition.bottom.rawValue
 
     @State private var openAtLogin = LoginItemManager.isEnabled
-    // Placeholder state — remaining General toggles not yet wired to real settings.
-    @State private var iCloudSync = false
-    @State private var soundEffects = true
 
     private var panelPosition: PanelPosition {
         PanelPosition(rawValue: panelPositionRaw) ?? .bottom
@@ -70,15 +67,12 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("General") {
-                Toggle("Open at login",    isOn: $openAtLogin)
+                Toggle("Open at login", isOn: $openAtLogin)
                     .onChange(of: openAtLogin) { _, newValue in
                         if !LoginItemManager.setEnabled(newValue) {
                             openAtLogin = LoginItemManager.isEnabled
                         }
                     }
-                Toggle("iCloud sync",      isOn: $iCloudSync)
-                    .disabled(true)
-                Toggle("Sound effects",    isOn: $soundEffects)
 
                 LabeledContent("Panel position on screen") {
                     HStack(spacing: 2) {
@@ -107,14 +101,8 @@ struct SettingsView: View {
             Section("Shortcuts") {
                 LabeledContent("Activate Paste") {
                     KeyRecorderView(shortcut: shortcuts.binding(for: .activatePaste))
-                        .disabled(true)
-                }
-                LabeledContent("Activate Paste Stack") {
-                    KeyRecorderView(shortcut: shortcuts.binding(for: .activatePasteStack))
-                        .disabled(true)
                 }
             }
-
         }
         .formStyle(.grouped)
         .frame(width: 520, height: 420)

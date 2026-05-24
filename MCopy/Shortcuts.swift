@@ -97,13 +97,11 @@ struct Shortcut: Codable, Equatable {
 
 enum ShortcutAction: String, CaseIterable {
     case activatePaste
-    case activatePasteStack
 
     var defaultsKey: String { "shortcut.\(rawValue)" }
     var hotKeyID: UInt32 {
         switch self {
-        case .activatePaste:      return 1
-        case .activatePasteStack: return 2
+        case .activatePaste: return 1
         }
     }
 }
@@ -114,9 +112,6 @@ final class ShortcutStore: ObservableObject {
     @Published var activatePaste: Shortcut? {
         didSet { persist(.activatePaste, activatePaste); onChange?(.activatePaste, activatePaste) }
     }
-    @Published var activatePasteStack: Shortcut? {
-        didSet { persist(.activatePasteStack, activatePasteStack); onChange?(.activatePasteStack, activatePasteStack) }
-    }
 
     var onChange: ((ShortcutAction, Shortcut?) -> Void)?
 
@@ -124,16 +119,12 @@ final class ShortcutStore: ObservableObject {
         // Default Activate Paste = ⌘⇧V to match the previous hardcoded binding.
         self.activatePaste = Self.load(.activatePaste)
             ?? Shortcut(keyCode: UInt16(kVK_ANSI_V), modifiers: [.command, .shift])
-        self.activatePasteStack = Self.load(.activatePasteStack)
-            ?? Shortcut(keyCode: UInt16(kVK_ANSI_C), modifiers: [.command, .shift])
     }
 
     func binding(for action: ShortcutAction) -> Binding<Shortcut?> {
         switch action {
         case .activatePaste:
             return Binding(get: { self.activatePaste }, set: { self.activatePaste = $0 })
-        case .activatePasteStack:
-            return Binding(get: { self.activatePasteStack }, set: { self.activatePasteStack = $0 })
         }
     }
 
