@@ -61,7 +61,10 @@ struct CardView: View {
             footerSection
         }
         .frame(width: cardWidth)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(red: 0.12, green: 0.12, blue: 0.135))
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
@@ -99,7 +102,14 @@ struct CardView: View {
         }
         .padding(.horizontal, 11)
         .frame(height: titleHeight)
-        .background(item.titleBarColor)
+        .frame(maxWidth: .infinity)
+        .background(
+            UnevenRoundedRectangle(
+                cornerRadii: .init(topLeading: 10, bottomLeading: 0, bottomTrailing: 0, topTrailing: 10),
+                style: .continuous
+            )
+            .fill(item.titleBarColor)
+        )
     }
 
     // MARK: - Content section (dark preview area)
@@ -123,6 +133,7 @@ struct CardView: View {
             }
         }
         .frame(height: contentHeight)
+        .frame(maxWidth: .infinity)
         .background(Color(red: 0.14, green: 0.14, blue: 0.155))
     }
 
@@ -230,7 +241,14 @@ struct CardView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.135))
+        .frame(maxWidth: .infinity)
+        .background(
+            UnevenRoundedRectangle(
+                cornerRadii: .init(topLeading: 0, bottomLeading: 10, bottomTrailing: 10, topTrailing: 0),
+                style: .continuous
+            )
+            .fill(Color(red: 0.12, green: 0.12, blue: 0.135))
+        )
     }
 }
 
