@@ -70,6 +70,8 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
     private let openDuration: TimeInterval = 0.22
     private let closeDuration: TimeInterval = 0.16
     private let slideOffset: CGFloat = 24
+    private let singleRowPanelHeight: CGFloat = 270
+    private let doubleRowPanelHeight: CGFloat = 490
 
     init(container: ModelContainer, store: ClipboardStore) {
         self.store = store
@@ -92,6 +94,12 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         let view = ClipboardHistoryView(
             panelState: panelState,
             onPaste: { [weak self] item in self?.pasteItem(item) },
+            onTogglePin: { [weak self] item, canShowPinnedRow in
+                self?.togglePinnedItem(item, canShowPinnedRow: canShowPinnedRow)
+            },
+            onTwoRowVisibilityChange: { [weak self] isTwoRow in
+                self?.resizeForTwoRows(isTwoRow)
+            },
             onDismiss: { [weak self] in self?.close() }
         )
         .modelContainer(container)
@@ -109,7 +117,7 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         }
 
         let position = PanelPosition.current
-        let panelBarHeight: CGFloat = 230
+        let panelBarHeight = barHeightForCurrentContent()
         let sidePanelWidth: CGFloat = 220
         let sideMargin: CGFloat = 20
         let vf = screen.visibleFrame
@@ -203,6 +211,60 @@ class ClipboardPanel: NSPanel, NSWindowDelegate {
         skipCloseAnimation = true
         close()
         skipCloseAnimation = false
+    }
+
+    private func togglePinnedItem(_ item: ClipboardItem, canShowPinnedRow: Bool) {
+        let shouldPreExpand = canShowPinnedRow
+            && !item.isPinned
+            && store.hasUnpinnedItems(excluding: item)
+
+        if shouldPreExpand {
+            resizeForTwoRows(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self, weak item] in
+                guard let self, let item else { return }
+                withAnimation(.easeOut(duration: 0.18)) {
+                    self.store.togglePinned(item)
+                }
+            }
+            return
+        }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            store.togglePinned(item)
+        }
+        resizeForTwoRows(canShowPinnedRow && store.hasPinnedAndUnpinnedItems())
+    }
+
+    private func resizeForTwoRows(_ isTwoRow: Bool) {
+        guard !PanelPosition.current.isVertical else { return }
+        let targetHeight = barHeight(isTwoRow: isTwoRow)
+        guard abs(frame.height - targetHeight) > 1 else { return }
+
+        var target = frame
+        switch PanelPosition.current {
+        case .bottom:
+            target.size.height = targetHeight
+        case .top:
+            let oldMaxY = target.maxY
+            target.size.height = targetHeight
+            target.origin.y = oldMaxY - targetHeight
+        case .left, .right:
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0
+            ctx.allowsImplicitAnimation = false
+            setFrame(target, display: true)
+        }
+    }
+
+    private func barHeightForCurrentContent() -> CGFloat {
+        barHeight(isTwoRow: store.hasPinnedAndUnpinnedItems())
+    }
+
+    private func barHeight(isTwoRow: Bool) -> CGFloat {
+        isTwoRow ? doubleRowPanelHeight : singleRowPanelHeight
     }
 
     /// Offset toward the off-screen edge for the given position. Used for both

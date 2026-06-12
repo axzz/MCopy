@@ -28,6 +28,7 @@ final class ClipboardItem {
     /// Small JPEG generated at capture time for fast preview rendering.
     /// Optional and additive — old rows simply have nil and fall back to imageData.
     var thumbnailData: Data?
+    var isPinned: Bool
     var timestamp: Date
 
     init(
@@ -36,7 +37,8 @@ final class ClipboardItem {
         rtfData: Data? = nil,
         htmlData: Data? = nil,
         imageData: Data? = nil,
-        thumbnailData: Data? = nil
+        thumbnailData: Data? = nil,
+        isPinned: Bool = false
     ) {
         self.id = UUID()
         self.contentType = contentType.rawValue
@@ -45,6 +47,7 @@ final class ClipboardItem {
         self.htmlData = htmlData
         self.imageData = imageData
         self.thumbnailData = thumbnailData
+        self.isPinned = isPinned
         self.timestamp = Date()
     }
 

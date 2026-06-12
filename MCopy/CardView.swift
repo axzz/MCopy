@@ -1,29 +1,54 @@
 import SwiftUI
 import AppKit
+import ImageIO
 import UniformTypeIdentifiers
 
 /// Decoded-image cache keyed by ClipboardItem.id.
-/// Avoids re-decoding JPEG/TIFF data on every SwiftUI re-render — scrolling a
-/// row of image cards otherwise pegs the CPU.
+/// CGImage rendering avoids the occasional flipped coordinate interpretation
+/// seen when SwiftUI renders some TIFF-backed NSImages.
 enum ImagePreviewCache {
-    private static let cache: NSCache<NSString, NSImage> = {
-        let c = NSCache<NSString, NSImage>()
+    private static let cache: NSCache<NSString, CGImageBox> = {
+        let c = NSCache<NSString, CGImageBox>()
         c.countLimit = ClipboardStore.capacity
         return c
     }()
 
-    static func image(for id: UUID, data: Data) -> NSImage? {
+    static func image(for id: UUID, data: Data) -> CGImage? {
         let key = id.uuidString as NSString
-        if let cached = cache.object(forKey: key) { return cached }
-        guard let img = NSImage(data: data) else { return nil }
-        cache.setObject(img, forKey: key)
-        return img
+        if let cached = cache.object(forKey: key) { return cached.image }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [
+                kCGImageSourceShouldCache: true
+              ] as CFDictionary) else { return nil }
+        cache.setObject(CGImageBox(image), forKey: key)
+        return image
+    }
+
+    static func image(forFileAt path: String) -> CGImage? {
+        let key = "file:\(path)" as NSString
+        if let cached = cache.object(forKey: key) { return cached.image }
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [
+                kCGImageSourceShouldCache: true
+              ] as CFDictionary) else { return nil }
+        cache.setObject(CGImageBox(image), forKey: key)
+        return image
+    }
+}
+
+private final class CGImageBox {
+    let image: CGImage
+
+    init(_ image: CGImage) {
+        self.image = image
     }
 }
 
 struct CardView: View {
     let item: ClipboardItem
     let isSelected: Bool
+    var onTogglePin: () -> Void
 
     private let cardWidth: CGFloat    = 190
     private let titleHeight: CGFloat  = 40
@@ -60,6 +85,17 @@ struct CardView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer()
+
+            Button(action: onTogglePin) {
+                Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(item.isPinned ? .white : .white.opacity(0.58))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(item.isPinned ? "Unpin" : "Pin")
+            .animation(.easeInOut(duration: 0.14), value: item.isPinned)
         }
         .padding(.horizontal, 11)
         .frame(height: titleHeight)
@@ -93,11 +129,8 @@ struct CardView: View {
     @ViewBuilder
     private var imagePreview: some View {
         if let data = item.thumbnailData ?? item.imageData,
-           let nsImage = ImagePreviewCache.image(for: item.id, data: data) {
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+           let image = ImagePreviewCache.image(for: item.id, data: data) {
+            cgImageView(image)
         } else {
             Image(systemName: "photo")
                 .font(.system(size: 26))
@@ -113,19 +146,16 @@ struct CardView: View {
             .filter { !$0.isEmpty }
         let firstPath = paths.first ?? ""
 
-        let thumbImage: NSImage? = {
+        let thumbImage: CGImage? = {
             if let data = item.thumbnailData ?? item.imageData,
                let img = ImagePreviewCache.image(for: item.id, data: data) { return img }
-            if isImageFile(firstPath) { return NSImage(contentsOfFile: firstPath) }
+            if isImageFile(firstPath) { return ImagePreviewCache.image(forFileAt: firstPath) }
             return nil
         }()
 
-        if let nsImage = thumbImage {
+        if let image = thumbImage {
             ZStack(alignment: .bottomTrailing) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                cgImageView(image)
 
                 if paths.count > 1 {
                     Text("+\(paths.count - 1)")
@@ -163,6 +193,13 @@ struct CardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func cgImageView(_ image: CGImage) -> some View {
+        Image(decorative: image, scale: 1, orientation: .up)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func isImageFile(_ path: String) -> Bool {

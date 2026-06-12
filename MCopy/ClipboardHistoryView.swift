@@ -11,9 +11,53 @@ struct ClipboardHistoryView: View {
     @FocusState private var isSearchFocused: Bool
 
     var onPaste: (ClipboardItem) -> Void
+    var onTogglePin: (ClipboardItem, Bool) -> Void
+    var onTwoRowVisibilityChange: (Bool) -> Void
     var onDismiss: () -> Void
 
     private static let leadingAnchorID = "__leading_anchor__"
+    private static let pinnedLeadingAnchorID = "__pinned_leading_anchor__"
+    private static let layoutAnimation = Animation.easeInOut(duration: 0.22)
+
+    private struct HistoryRow {
+        let items: [ClipboardItem]
+        let anchorID: String
+    }
+
+    private enum HistoryLayout {
+        case one(HistoryRow)
+        case two(HistoryRow, HistoryRow)
+
+        var rows: [HistoryRow] {
+            switch self {
+            case .one(let row):
+                return [row]
+            case .two(let first, let second):
+                return [first, second]
+            }
+        }
+
+        var items: [ClipboardItem] {
+            rows.flatMap(\.items)
+        }
+
+        var primaryAnchorID: String {
+            rows.first?.anchorID ?? ClipboardHistoryView.leadingAnchorID
+        }
+
+        var isTwoRow: Bool {
+            if case .two = self { return true }
+            return false
+        }
+
+        var signature: String {
+            rows
+                .map { row in
+                    "\(row.anchorID):\(row.items.map(\.id.uuidString).joined(separator: ","))"
+                }
+                .joined(separator: "|")
+        }
+    }
 
     private var panelPosition: PanelPosition {
         PanelPosition(rawValue: panelPositionRaw) ?? .bottom
@@ -21,8 +65,42 @@ struct ClipboardHistoryView: View {
 
     private var displayItems: [ClipboardItem] {
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return items }
-        return items.filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
+        guard !q.isEmpty else { return unpinnedItems }
+        return unpinnedItems.filter { ($0.textContent ?? "").localizedCaseInsensitiveContains(q) }
+    }
+
+    private var pinnedItems: [ClipboardItem] {
+        guard searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return items.filter(\.isPinned)
+    }
+
+    private var unpinnedItems: [ClipboardItem] {
+        items.filter { !$0.isPinned }
+    }
+
+    private var selectableItems: [ClipboardItem] {
+        historyLayout.items
+    }
+
+    private var isSearchActive: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var historyLayout: HistoryLayout {
+        let normalRow = HistoryRow(items: displayItems, anchorID: Self.leadingAnchorID)
+        let pinnedRow = HistoryRow(items: pinnedItems, anchorID: Self.pinnedLeadingAnchorID)
+
+        if isSearchActive || pinnedItems.isEmpty {
+            return .one(normalRow)
+        }
+        if displayItems.isEmpty {
+            return .one(pinnedRow)
+        }
+        return .two(normalRow, pinnedRow)
+    }
+
+    private var hasTwoRows: Bool {
+        historyLayout.isTwoRow
     }
 
     var body: some View {
@@ -33,7 +111,7 @@ struct ClipboardHistoryView: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(height: 0.5)
 
-            if displayItems.isEmpty {
+            if selectableItems.isEmpty {
                 emptyState
             } else if panelPosition.isVertical {
                 verticalCardScroll
@@ -41,15 +119,19 @@ struct ClipboardHistoryView: View {
                 cardScroll
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // NSVisualEffectView with corner radius on its own layer —
         // avoids SwiftUI Material's intrinsic 1px vibrancy edge highlight.
         .background(
             VisualEffectView(material: .menu, blendingMode: .behindWindow, cornerRadius: 16)
         )
+        .compositingGroup()
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .preferredColorScheme(.dark)
         .onAppear {
             isSearchFocused = true
-            selectedID = displayItems.first?.id
+            selectedID = selectableItems.first?.id
+            onTwoRowVisibilityChange(hasTwoRows)
             // Cold launch: the TextField isn't wired into the panel's
             // responder chain yet when onAppear fires, so re-assert next tick.
             DispatchQueue.main.async {
@@ -62,15 +144,17 @@ struct ClipboardHistoryView: View {
             isSearchFocused = true
             if panelState.resetOnNextOpen {
                 panelState.resetOnNextOpen = false
-                selectedID = displayItems.first?.id
+                selectedID = selectableItems.first?.id
                 scrollResetToken = UUID()
             }
         }
         .onChange(of: searchQuery) { _, _ in
-            selectedID = displayItems.first?.id
+            selectedID = selectableItems.first?.id
+            onTwoRowVisibilityChange(hasTwoRows)
         }
-        .onChange(of: displayItems.map(\.id)) { _, _ in
+        .onChange(of: selectableItems.map(\.id)) { _, _ in
             ensureValidSelection()
+            onTwoRowVisibilityChange(hasTwoRows)
         }
     }
 
@@ -144,31 +228,16 @@ struct ClipboardHistoryView: View {
 
     private var cardScroll: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                // Sentinel sits outside the leading padding so scrolling to its
-                // leading edge snaps content to offset 0 — preserving the
-                // 16pt visual gutter that anchoring the first card would eat.
-                HStack(spacing: 0) {
-                    Color.clear.frame(width: 0, height: 1).id(Self.leadingAnchorID)
-                    HStack(spacing: 10) {
-                        ForEach(displayItems, id: \.id) { item in
-                            CardView(item: item, isSelected: item.id == selectedID)
-                                .id(item.id)
-                                .onTapGesture { onPaste(item) }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .padding(.top, 12)
-                .padding(.bottom, 14)
-            }
+            horizontalLayoutRows
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .onAppear {
                 DispatchQueue.main.async {
-                    proxy.scrollTo(Self.leadingAnchorID, anchor: .leading)
+                    proxy.scrollTo(historyLayout.primaryAnchorID, anchor: .leading)
                 }
             }
             .onChange(of: scrollResetToken) { _, _ in
-                proxy.scrollTo(Self.leadingAnchorID, anchor: .leading)
+                resetHorizontalScroll(proxy)
             }
             .onChange(of: selectedID) { _, newID in
                 guard let newID else { return }
@@ -179,30 +248,65 @@ struct ClipboardHistoryView: View {
         }
     }
 
+    @ViewBuilder
+    private var horizontalLayoutRows: some View {
+        let rows = historyLayout.rows
+        VStack(spacing: 12) {
+            if let first = rows.first {
+                horizontalRow(first)
+                    .transaction { tx in
+                        tx.animation = nil
+                    }
+            }
+            if hasTwoRows, rows.count > 1 {
+                rowDivider(horizontalInset: 16)
+                    .transition(rowTransition)
+                horizontalRow(rows[1])
+                    .transition(rowTransition)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func horizontalRow(_ row: HistoryRow) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            // Sentinel sits outside the leading padding so scrolling to its
+            // leading edge snaps content to offset 0 — preserving the
+            // 16pt visual gutter that anchoring the first card would eat.
+            HStack(spacing: 0) {
+                Color.clear.frame(width: 0, height: 1).id(row.anchorID)
+                HStack(spacing: 10) {
+                    ForEach(row.items, id: \.id) { item in
+                        CardView(
+                            item: item,
+                            isSelected: item.id == selectedID,
+                            onTogglePin: { onTogglePin(item, !isSearchActive) }
+                        )
+                        .id(item.id)
+                        .onTapGesture { onPaste(item) }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+        }
+    }
+
     private var verticalCardScroll: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    Color.clear.frame(width: 1, height: 0).id(Self.leadingAnchorID)
-                    VStack(spacing: 10) {
-                        ForEach(displayItems, id: \.id) { item in
-                            CardView(item: item, isSelected: item.id == selectedID)
-                                .id(item.id)
-                                .onTapGesture { onPaste(item) }
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                }
+                verticalLayoutRows
+                .padding(.vertical, 10)
                 .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .onAppear {
                 DispatchQueue.main.async {
-                    proxy.scrollTo(Self.leadingAnchorID, anchor: .top)
+                    proxy.scrollTo(historyLayout.primaryAnchorID, anchor: .top)
                 }
             }
             .onChange(of: scrollResetToken) { _, _ in
-                proxy.scrollTo(Self.leadingAnchorID, anchor: .top)
+                resetVerticalScroll(proxy)
             }
             .onChange(of: selectedID) { _, newID in
                 guard let newID else { return }
@@ -210,6 +314,73 @@ struct ClipboardHistoryView: View {
                     proxy.scrollTo(newID, anchor: .center)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var verticalLayoutRows: some View {
+        let rows = historyLayout.rows
+        VStack(spacing: 12) {
+            if let first = rows.first {
+                verticalRow(first)
+                    .transaction { tx in
+                        tx.animation = nil
+                    }
+            }
+            if hasTwoRows, rows.count > 1 {
+                rowDivider(horizontalInset: 2)
+                    .transition(rowTransition)
+                verticalRow(rows[1])
+                    .transition(rowTransition)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func verticalRow(_ row: HistoryRow) -> some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(width: 1, height: 0).id(row.anchorID)
+            VStack(spacing: 10) {
+                ForEach(row.items, id: \.id) { item in
+                    CardView(
+                        item: item,
+                        isSelected: item.id == selectedID,
+                        onTogglePin: { onTogglePin(item, !isSearchActive) }
+                    )
+                    .id(item.id)
+                    .onTapGesture { onPaste(item) }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var rowTransition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(y: 14).combined(with: .opacity),
+            removal: .offset(y: 8).combined(with: .opacity)
+        )
+    }
+
+    private func rowDivider(horizontalInset: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.06))
+            .frame(height: 0.5)
+            .padding(.horizontal, horizontalInset)
+    }
+
+    private func resetHorizontalScroll(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(historyLayout.primaryAnchorID, anchor: .leading)
+        if hasTwoRows {
+            proxy.scrollTo(Self.pinnedLeadingAnchorID, anchor: .leading)
+        }
+    }
+
+    private func resetVerticalScroll(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(historyLayout.primaryAnchorID, anchor: .top)
+        if hasTwoRows {
+            proxy.scrollTo(Self.pinnedLeadingAnchorID, anchor: .top)
         }
     }
 
@@ -231,24 +402,24 @@ struct ClipboardHistoryView: View {
 
     private func pasteSelected() {
         guard let id = selectedID,
-              let item = displayItems.first(where: { $0.id == id }) else { return }
+              let item = selectableItems.first(where: { $0.id == id }) else { return }
         onPaste(item)
     }
 
     private func moveSelection(by delta: Int) {
-        guard !displayItems.isEmpty else { return }
-        let currentIndex = displayItems.firstIndex(where: { $0.id == selectedID }) ?? 0
+        guard !selectableItems.isEmpty else { return }
+        let currentIndex = selectableItems.firstIndex(where: { $0.id == selectedID }) ?? 0
         let newIndex = currentIndex + delta
-        guard newIndex >= 0, newIndex < displayItems.count else { return }
-        selectedID = displayItems[newIndex].id
+        guard newIndex >= 0, newIndex < selectableItems.count else { return }
+        selectedID = selectableItems[newIndex].id
     }
 
     /// Keep `selectedID` pointing at an item that still exists in `displayItems`.
     /// Falls back to the first item when the previously-selected one was removed
     /// or when nothing is selected yet.
     private func ensureValidSelection() {
-        if let id = selectedID, displayItems.contains(where: { $0.id == id }) { return }
-        selectedID = displayItems.first?.id
+        if let id = selectedID, selectableItems.contains(where: { $0.id == id }) { return }
+        selectedID = selectableItems.first?.id
     }
 }
 

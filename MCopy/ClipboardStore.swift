@@ -7,7 +7,8 @@ import SwiftData
 /// so the existing `@Query(sort: \.timestamp, order: .reverse)` in the UI
 /// reflects LRU order without further changes.
 ///
-/// Capacity is enforced on every mutation: items past `capacity` are deleted.
+/// Capacity is enforced on every mutation for unpinned items: items past
+/// `capacity` are deleted, while pinned items are preserved.
 final class ClipboardStore {
     static let capacity = 20
 
@@ -39,14 +40,7 @@ final class ClipboardStore {
             return dup
         }
         modelContext.insert(item)
-        // The new item just took one slot; everything past (capacity - 1) in
-        // the pre-insert list is now over capacity.
-        let surviveCount = Self.capacity - 1
-        if existing.count > surviveCount {
-            for stale in existing[surviveCount...] {
-                modelContext.delete(stale)
-            }
-        }
+        enforceCapacity(in: existing + [item])
         try? modelContext.save()
         return item
     }
@@ -56,6 +50,27 @@ final class ClipboardStore {
     func touch(_ item: ClipboardItem) {
         item.timestamp = Date()
         try? modelContext.save()
+    }
+
+    func togglePinned(_ item: ClipboardItem) {
+        item.isPinned.toggle()
+        if !item.isPinned {
+            enforceCapacity()
+        }
+        try? modelContext.save()
+    }
+
+    func hasPinnedItems() -> Bool {
+        fetchItems().contains { $0.isPinned }
+    }
+
+    func hasPinnedAndUnpinnedItems() -> Bool {
+        let items = fetchItems()
+        return items.contains { $0.isPinned } && items.contains { !$0.isPinned }
+    }
+
+    func hasUnpinnedItems(excluding item: ClipboardItem) -> Bool {
+        fetchItems().contains { !$0.isPinned && $0.id != item.id }
     }
 
     private func findDuplicate(of item: ClipboardItem, in existing: [ClipboardItem]) -> ClipboardItem? {
@@ -68,5 +83,25 @@ final class ClipboardStore {
             let rhs = candidate.thumbnailData ?? candidate.imageData
             return lhs == rhs
         }
+    }
+
+    private func enforceCapacity() {
+        enforceCapacity(in: fetchItems())
+    }
+
+    private func enforceCapacity(in items: [ClipboardItem]) {
+        let unpinned = items
+            .filter { !$0.isPinned }
+            .sorted { $0.timestamp > $1.timestamp }
+        guard unpinned.count > Self.capacity else { return }
+        for stale in unpinned[Self.capacity...] {
+            modelContext.delete(stale)
+        }
+    }
+
+    private func fetchItems() -> [ClipboardItem] {
+        (try? modelContext.fetch(
+            FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
+        )) ?? []
     }
 }
