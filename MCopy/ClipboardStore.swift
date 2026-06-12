@@ -54,7 +54,10 @@ final class ClipboardStore {
 
     func togglePinned(_ item: ClipboardItem) {
         item.isPinned.toggle()
-        if !item.isPinned {
+        if item.isPinned {
+            item.pinnedAt = Date()
+        } else {
+            item.pinnedAt = nil
             enforceCapacity()
         }
         try? modelContext.save()

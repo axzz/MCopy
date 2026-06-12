@@ -29,6 +29,7 @@ final class ClipboardItem {
     /// Optional and additive — old rows simply have nil and fall back to imageData.
     var thumbnailData: Data?
     var isPinned: Bool
+    var pinnedAt: Date?
     var timestamp: Date
 
     init(
@@ -38,7 +39,8 @@ final class ClipboardItem {
         htmlData: Data? = nil,
         imageData: Data? = nil,
         thumbnailData: Data? = nil,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        pinnedAt: Date? = nil
     ) {
         self.id = UUID()
         self.contentType = contentType.rawValue
@@ -48,6 +50,7 @@ final class ClipboardItem {
         self.imageData = imageData
         self.thumbnailData = thumbnailData
         self.isPinned = isPinned
+        self.pinnedAt = pinnedAt
         self.timestamp = Date()
     }
 

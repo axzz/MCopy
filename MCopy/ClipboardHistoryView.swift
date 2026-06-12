@@ -71,7 +71,11 @@ struct ClipboardHistoryView: View {
 
     private var pinnedItems: [ClipboardItem] {
         guard searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return items.filter(\.isPinned)
+        return items
+            .filter(\.isPinned)
+            .sorted { lhs, rhs in
+                (lhs.pinnedAt ?? lhs.timestamp) > (rhs.pinnedAt ?? rhs.timestamp)
+            }
     }
 
     private var unpinnedItems: [ClipboardItem] {
