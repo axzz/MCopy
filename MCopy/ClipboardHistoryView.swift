@@ -125,7 +125,6 @@ struct ClipboardHistoryView: View {
         .background(
             VisualEffectView(material: .menu, blendingMode: .behindWindow, cornerRadius: 16)
         )
-        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .preferredColorScheme(.dark)
         .onAppear {
