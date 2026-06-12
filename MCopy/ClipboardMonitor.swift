@@ -1,5 +1,4 @@
 import AppKit
-import ImageIO
 import SwiftData
 import UniformTypeIdentifiers
 
@@ -69,7 +68,7 @@ class ClipboardMonitor {
         // Image (screenshots, in-app copies — no file URL present)
         if let image = pb.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
            let tiff = image.tiffRepresentation {
-            let thumb = Self.imageThumbnail(fromImageData: tiff)
+            let thumb = Self.imageThumbnail(from: image)
             return ClipboardItem(contentType: .image, imageData: tiff, thumbnailData: thumb)
         }
 
@@ -114,36 +113,57 @@ class ClipboardMonitor {
         guard !ext.isEmpty,
               let utType = UTType(filenameExtension: ext),
               utType.conforms(to: .image) else { return nil }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return thumbnailData(from: source)
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        return imageThumbnail(from: image)
     }
 
     /// Same downscaling logic, but for in-memory image bytes (e.g. pasteboard TIFF).
     static func imageThumbnail(fromImageData data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return thumbnailData(from: source)
+        guard let image = NSImage(data: data) else { return nil }
+        return imageThumbnail(from: image)
     }
 
-    private static func thumbnailData(from source: CGImageSource) -> Data? {
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 400,
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-            return nil
-        }
-        let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            data,
-            UTType.jpeg.identifier as CFString,
-            1,
-            nil
+    private static func imageThumbnail(from image: NSImage) -> Data? {
+        guard let rep = canonicalBitmap(from: image, maxPixelSize: 400) else { return nil }
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+    }
+
+    private static func canonicalBitmap(from image: NSImage, maxPixelSize: CGFloat) -> NSBitmapImageRep? {
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+        let scale = min(1, maxPixelSize / max(sourceSize.width, sourceSize.height))
+        let targetSize = NSSize(
+            width: max(1, floor(sourceSize.width * scale)),
+            height: max(1, floor(sourceSize.height * scale))
+        )
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(targetSize.width),
+            pixelsHigh: Int(targetSize.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
         ) else { return nil }
-        CGImageDestinationAddImage(destination, cgImage, [
-            kCGImageDestinationLossyCompressionQuality: 0.8
-        ] as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return data as Data
+
+        rep.size = targetSize
+        NSGraphicsContext.saveGraphicsState()
+        let context = NSGraphicsContext(bitmapImageRep: rep)
+        context?.imageInterpolation = .high
+        NSGraphicsContext.current = context
+        image.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: NSRect(origin: .zero, size: sourceSize),
+            operation: .copy,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep
     }
 }

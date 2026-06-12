@@ -1,11 +1,10 @@
 import SwiftUI
 import AppKit
-import ImageIO
 import UniformTypeIdentifiers
 
 /// Decoded-image cache keyed by ClipboardItem.id.
-/// CGImage rendering avoids the occasional flipped coordinate interpretation
-/// seen when SwiftUI renders some TIFF-backed NSImages.
+/// CGImage rendering avoids SwiftUI reinterpreting AppKit image coordinates on
+/// repeated card re-renders.
 enum ImagePreviewCache {
     private static let cache: NSCache<NSString, CGImageBox> = {
         let c = NSCache<NSString, CGImageBox>()
@@ -16,10 +15,8 @@ enum ImagePreviewCache {
     static func image(for id: UUID, data: Data) -> CGImage? {
         let key = id.uuidString as NSString
         if let cached = cache.object(forKey: key) { return cached.image }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [
-                kCGImageSourceShouldCache: true
-              ] as CFDictionary) else { return nil }
+        guard let nsImage = NSImage(data: data),
+              let image = canonicalCGImage(from: nsImage) else { return nil }
         cache.setObject(CGImageBox(image), forKey: key)
         return image
     }
@@ -28,12 +25,50 @@ enum ImagePreviewCache {
         let key = "file:\(path)" as NSString
         if let cached = cache.object(forKey: key) { return cached.image }
         let url = URL(fileURLWithPath: path)
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [
-                kCGImageSourceShouldCache: true
-              ] as CFDictionary) else { return nil }
+        guard let nsImage = NSImage(contentsOf: url),
+              let image = canonicalCGImage(from: nsImage) else { return nil }
         cache.setObject(CGImageBox(image), forKey: key)
         return image
+    }
+
+    private static func canonicalCGImage(from image: NSImage) -> CGImage? {
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+        let maxPixelSize: CGFloat = 400
+        let scale = min(1, maxPixelSize / max(sourceSize.width, sourceSize.height))
+        let targetSize = NSSize(
+            width: max(1, floor(sourceSize.width * scale)),
+            height: max(1, floor(sourceSize.height * scale))
+        )
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(targetSize.width),
+            pixelsHigh: Int(targetSize.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+
+        rep.size = targetSize
+        NSGraphicsContext.saveGraphicsState()
+        let context = NSGraphicsContext(bitmapImageRep: rep)
+        context?.imageInterpolation = .high
+        NSGraphicsContext.current = context
+        image.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: NSRect(origin: .zero, size: sourceSize),
+            operation: .copy,
+            fraction: 1
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        return rep.cgImage
     }
 }
 
@@ -128,7 +163,7 @@ struct CardView: View {
 
     @ViewBuilder
     private var imagePreview: some View {
-        if let data = item.thumbnailData ?? item.imageData,
+        if let data = item.imageData ?? item.thumbnailData,
            let image = ImagePreviewCache.image(for: item.id, data: data) {
             cgImageView(image)
         } else {
